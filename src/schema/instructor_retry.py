@@ -14,7 +14,7 @@ import instructor
 from openai import OpenAI
 
 from .taxonomy import TAXONOMY, RelationType, EntityType
-from .pydantic_model import BiologicalRelation, ExtractionResult
+from .pydantic_model import ExtractionResult
 
 
 # ── LLM client ────────────────────────────────────────────────────────────────
