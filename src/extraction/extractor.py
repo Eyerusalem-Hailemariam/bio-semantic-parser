@@ -338,3 +338,85 @@ def extract(chunk: dict, _depth: int = 0) -> ExtractionResult:
         rejected         = True,
         rejection_reason = last_error,
     )
+
+
+def extract_batch(chunks: list) -> list:
+    """
+    Extract relations from a list of annotated chunks in parallel.
+
+    Chunks are processed concurrently up to LLM_CHUNK_CONCURRENCY workers
+    (default 4, capped by the global LLM_GLOBAL_CONCURRENCY semaphore).
+
+    Saves a per-chunk progress file so the batch can resume from cached
+    results if the pipeline restarts mid-run.
+
+    Progress file: data/checkpoints/{doc_id}_layer6_progress.jsonl
+    Delete it to force a full re-extraction.
+    """
+    import json as _json
+    import threading as _threading
+    import concurrent.futures as _cf
+
+    _WORKERS = int(os.getenv("LLM_CHUNK_CONCURRENCY", "4"))
+
+    doc_id   = (chunks[0].get("document_id", "") if chunks else "")
+    _safe_id = doc_id.replace("/", "_").replace(":", "_") if doc_id else "unknown"
+    _ckpt_dir = Path(os.getenv("CHECKPOINTS_DIR", "data/checkpoints"))
+    _ckpt_dir.mkdir(parents=True, exist_ok=True)
+    _progress_path = _ckpt_dir / f"{_safe_id}_layer6_progress.jsonl"
+    _file_lock = _threading.Lock()
+    _completed: dict = {}
+    if _progress_path.exists():
+        try:
+            for line in _progress_path.read_text().splitlines():
+                entry = _json.loads(line)
+                _completed[entry["chunk_index"]] = entry["result"]
+        except Exception:
+            pass
+
+    def _process_one(args):
+        i, chunk = args
+        chunk_index = chunk.get("chunk_index", i)
+
+        if chunk_index in _completed:
+            cached    = _completed[chunk_index]
+            relations = [BiologicalRelation(**r) for r in cached.get("relations", [])]
+            return i, ExtractionResult(
+                relations=relations,
+                rejected=cached.get("rejected", False),
+                rejection_reason=cached.get("rejection_reason"),
+            )
+
+        result = extract(chunk)
+
+        try:
+            entry = {
+                "chunk_index": chunk_index,
+                "result": {
+                    "relations":        [r.model_dump() for r in result.relations],
+                    "rejected":         result.rejected,
+                    "rejection_reason": result.rejection_reason,
+                }
+            }
+            with _file_lock:
+                with open(_progress_path, "a", encoding="utf-8") as _f:
+                    _f.write(_json.dumps(entry) + "\n")
+        except Exception:
+            pass
+
+        return i, result
+
+    indexed_results = []
+    with _cf.ThreadPoolExecutor(max_workers=_WORKERS) as pool:
+        for i, result in pool.map(_process_one, enumerate(chunks)):
+            indexed_results.append((i, result))
+
+    indexed_results.sort(key=lambda x: x[0])
+    results = [r for _, r in indexed_results]
+
+    try:
+        _progress_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    return results
