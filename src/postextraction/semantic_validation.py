@@ -177,3 +177,134 @@ def validate(record: dict, source_text: str) -> dict:
 
 
 # ── Batch validation (optimized) ──────────────────────────────────────────────
+
+_BATCH_SIZE   = int(os.getenv("SEMANTIC_VALIDATION_BATCH",   "4"))
+_BATCH_WORKERS= int(os.getenv("SEMANTIC_VALIDATION_WORKERS", "1"))
+
+
+def _build_batch_prompt(items: list) -> list:
+    """Build a single LLM prompt that validates N relations at once."""
+    # All items must share the same source_text (grouped by chunk); sent once — no truncation
+    shared_source = items[0][1] if items else ""
+
+    blocks = []
+    for idx, (record, _) in enumerate(items, 1):
+        subject  = record.get("subject_name", "")
+        relation = record.get("relation", "")
+        obj      = record.get("object_name", "")
+        negated  = record.get("negated", False)
+        reasoning= (record.get("reasoning", "") or "")[:200]
+        blocks.append(
+            f"--- RELATION {idx} ---\n"
+            f"Subject : {subject}\n"
+            f"Relation: {relation}{'  [NEGATED]' if negated else ''}\n"
+            f"Object  : {obj}\n"
+            f"Reasoning from extraction LLM: {reasoning}"
+        )
+
+    user = (
+        "SOURCE TEXT (all relations below were extracted from this same chunk of text):\n"
+        f"\"{shared_source}\"\n\n"
+        "Validate each of the following relations against the SOURCE TEXT above.\n"
+        "For each relation return one JSON object in a top-level 'results' array.\n\n"
+        + "\n\n".join(blocks)
+        + "\n\nReturn ONLY this JSON:\n"
+        "{\n  \"results\": [\n"
+        "    {\n"
+        "      \"index\": 1,\n"
+        "      \"subject_correct\": true|false, \"subject_issue\": \"\",\n"
+        "      \"object_correct\": true|false, \"object_issue\": \"\",\n"
+        "      \"relation_correct\": true|false, \"relation_issue\": \"\",\n"
+        "      \"negation_correct\": true|false, \"negation_issue\": \"\",\n"
+        "      \"support_strong\": true|false, \"support_issue\": \"\",\n"
+        "      \"verdict\": \"VALID\"|\"REVIEW\"|\"REJECT\",\n"
+        "      \"verdict_reasoning\": \"...\",\n"
+        "      \"suggested_correction\": \"\"\n"
+        "    }\n  ]\n}"
+    )
+    return [
+        {"role": "system", "content":
+         "You are a strict biomedical fact-checker. Validate each relation. "
+         "Return only valid JSON with a 'results' array."},
+        {"role": "user", "content": user},
+    ]
+
+
+def _apply_verdict(record: dict, data: dict) -> dict:
+    """Apply one verdict dict (from batch or single) to a record."""
+    verdict   = data.get("verdict", "REVIEW")
+    reasoning = data.get("verdict_reasoning", "")
+    correction= data.get("suggested_correction", "")
+
+    issues = []
+    for dim, issue_key in [
+        ("subject",  "subject_issue"),
+        ("object",   "object_issue"),
+        ("relation", "relation_issue"),
+        ("negation", "negation_issue"),
+        ("support",  "support_issue"),
+    ]:
+        correct_key = f"{dim}_correct" if dim != "support" else "support_strong"
+        if not data.get(correct_key, True):
+            issue_text = data.get(issue_key, "")
+            if issue_text:
+                issues.append(f"{dim.upper()}: {issue_text}")
+
+    flagged       = record.get("flagged_for_review", False)
+    review_reason = record.get("review_reason", "")
+    if verdict in ("REVIEW", "REJECT"):
+        flagged = True
+        new_reason = f"SEMANTIC_{verdict}: {reasoning}"
+        if issues:
+            new_reason += " | Issues: " + "; ".join(issues)
+        if correction:
+            new_reason += f" | Suggested: {correction}"
+        review_reason = (review_reason + " | " + new_reason).strip(" |")
+
+    return {
+        **record,
+        "val_subject_correct":    data.get("subject_correct",  True),
+        "val_object_correct":     data.get("object_correct",   True),
+        "val_relation_correct":   data.get("relation_correct", True),
+        "val_negation_correct":   data.get("negation_correct", True),
+        "val_support_strong":     data.get("support_strong",   True),
+        "validation_verdict":     verdict,
+        "validation_reasoning":   reasoning,
+        "suggested_correction":   correction,
+        "validation_issues":      issues,
+        "flagged_for_review":     flagged,
+        "review_reason":          review_reason,
+        "is_semantically_valid":  (verdict == "VALID"),
+    }
+
+
+def validate_batch(pairs: list) -> list:
+    """Validate a batch of (record, source_text) pairs in one LLM call; falls back to SKIPPED on error."""
+    if not pairs:
+        return []
+
+    messages = _build_batch_prompt(pairs)
+    try:
+        raw  = _call_llm(messages=messages, model=_MODEL, temperature=_TEMPERATURE,
+                         max_tokens=int(os.getenv("LLM_OUTPUT_TOKENS", "4096")))
+        data = _parse_json(raw)
+        results = data.get("results", [])
+    except Exception as exc:
+        # Whole batch failed — return all as SKIPPED
+        return [
+            {**record, "validation_verdict": "SKIPPED",
+             "validation_reasoning": f"Batch validation failed: {exc}"}
+            for record, _ in pairs
+        ]
+
+    # Map results back to records by index
+    results_by_idx = {r.get("index", i+1): r for i, r in enumerate(results)}
+    updated = []
+    for i, (record, _) in enumerate(pairs, 1):
+        verdict_data = results_by_idx.get(i, {})
+        if not verdict_data:
+            updated.append({**record, "validation_verdict": "SKIPPED",
+                            "validation_reasoning": "No result returned for this relation"})
+        else:
+            updated.append(_apply_verdict(record, verdict_data))
+    return updated
