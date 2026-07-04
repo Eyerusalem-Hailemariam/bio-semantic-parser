@@ -287,3 +287,60 @@ def _combine_channels(channels: list) -> float:
 
 
 # ── Public helper: explain a score ───────────────────────────────────────────
+
+def explain(
+    subject_name: str,
+    object_name: str,
+    negated: bool,
+    llm_confidence: float,
+    section: str,
+    text: str,
+    relation: str = "",
+    reasoning: str = "",
+) -> dict:
+    """Return full per-channel score breakdown for audit and debugging."""
+    text_lc  = text.lower()
+    sec      = section.lower()
+    subj_key = subject_name.lower()[:12]
+    obj_key  = object_name.lower()[:12]
+    llm_raw  = float(llm_confidence or 0.5)
+
+    hyp2      = f"{subject_name} {relation} {object_name}"
+    best_sent = _best_sentence(text, subj_key, obj_key,
+                               reasoning=reasoning,
+                               relation_hypothesis=hyp2)
+
+    c1 = _channel_section(sec)
+    c2 = _channel_factuality(best_sent, best_sent.lower())
+    c3 = _channel_quantitative(text_lc)
+    c4 = _channel_direct_claim(text_lc, subj_key, obj_key)
+    c5 = _channel_nli_entailment(best_sent, subject_name, relation, object_name,
+                                  llm_fallback=llm_raw)
+
+    combined = _combine_channels([c1, c2, c3, c4, c5])
+    if negated:
+        combined = min(combined, 0.65)
+
+    return {
+        "final_score":          round(min(max(combined, 0.0), 1.0), 4),
+        "channels": {
+            "C1_section_weight":       round(c1, 4),
+            "C2_factuality_nli":       round(c2, 4),
+            "C3_quantitative_evidence":round(c3, 4),
+            "C4_direct_claim":         round(c4, 4),
+            "C5_nli_entailment":       round(c5, 4),
+        },
+        "inputs": {
+            "section":          section,
+            "llm_confidence":   llm_raw,
+            "negated":          negated,
+            "weights":          CHANNEL_WEIGHTS,
+        },
+        "references": {
+            "combination_formula": "Open Targets weighted harmonic sum (Ochoa 2021, NAR)",
+            "section_weights":     "Open Targets (Kafkas 2017, PMC5461726)",
+            "factuality":          "Kilicoglu 2017 (PMC5497973)",
+            "quantitative":        "Open Targets (Ochoa 2021, NAR)",
+            "llm_reliability":     "INDRA (Bachman 2023, PMC10167483)",
+        },
+    }
