@@ -152,7 +152,7 @@ def process(
         detail(f"Relation: {norm['relation']}")
         detail("")
 
-    n_resolved = sum(1 for r in records if not r.get('flagged_for_review'))
+    n_resolved = sum(1 for r in records if not (r.get("subject_needs_review") or r.get("object_needs_review")))
     n_review   = sum(1 for r in records if r.get('subject_needs_review') or r.get('object_needs_review'))
     log(f"  → {n_resolved} fully resolved | {n_review} need review")
 
