@@ -163,9 +163,11 @@ def process(
     #   "number of downloads → associates_with → rating score"
     # while keeping valid triples where at least one entity has an ontology ID.
     _ONTOLOGY_PREFIXES = (
-        "MESH:", "GO:", "NCBITaxon:", "NCBI_Gene:", "NCBI:", "ChEBI:", "CHEBI:",
-        "HMDB:", "PUBCHEM:", "DOID:", "HP:", "MONDO:", "UniProtKB:",
-        "CL:", "UBERON:", "PR:", "EFO:", "RO:", "OMIM:", "KEGG:", "REACTOME:",
+        "ENSEMBL:", "NCBI_GENE:", "NCBI_Gene:", "NCBI:", "NCBITaxon:",
+        "UniProtKB:", "RxNorm:", "RXCUI:", "WD:",
+        "MESH:", "GO:", "ChEBI:", "CHEBI:", "HMDB:", "PUBCHEM:",
+        "DOID:", "HP:", "MONDO:", "CL:", "UBERON:", "PR:",
+        "EFO:", "RO:", "OMIM:", "KEGG:", "REACTOME:",
     )
 
     def _has_ontology_id(entity_id: str) -> bool:
