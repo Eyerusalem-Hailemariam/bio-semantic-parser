@@ -1,26 +1,12 @@
 """Layer 7 step 5 — second LLM pass to resolve entities that failed normalization."""
 import json
-import os
 import re
 from collections import defaultdict
-from openai import OpenAI
-from dotenv import load_dotenv
-
-load_dotenv()
-
-_BASE_URL    = os.getenv("LLM_BASE_URL",    "http://localhost:11434/v1")
-_API_KEY     = os.getenv("LLM_API_KEY",     "ollama")
-_MODEL       = os.getenv("LLM_MODEL",       "gemma4")
-_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.0"))
-
-_CLIENT = None
+from src.llm_client import make_client, MODEL as _MODEL, TEMPERATURE as _TEMPERATURE
 
 
-def _client() -> OpenAI:
-    global _CLIENT
-    if _CLIENT is None:
-        _CLIENT = OpenAI(api_key=_API_KEY, base_url=_BASE_URL)
-    return _CLIENT
+def _client():
+    return make_client()
 
 
 def _parse_json(raw: str) -> dict:
