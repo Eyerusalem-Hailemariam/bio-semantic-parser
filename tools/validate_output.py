@@ -147,11 +147,12 @@ def check_relation_types(neo4j_dir: Path, metta_dir: Path) -> dict:
         if rel and rel not in _VALID_RELATIONS:
             unknown[rel].append(str(path.name))
 
-    for path in metta_dir.rglob("edges_*.metta"):
-        for triple in _metta_triples(path):
-            rel = triple["relation"]
-            if rel not in _VALID_RELATIONS:
-                unknown[rel].append(str(path.name))
+    if metta_dir.exists():
+        for path in metta_dir.rglob("edges_*.metta"):
+            for triple in _metta_triples(path):
+                rel = triple["relation"]
+                if rel not in _VALID_RELATIONS:
+                    unknown[rel].append(str(path.name))
 
     issues = []
     for rel, files in unknown.items():
