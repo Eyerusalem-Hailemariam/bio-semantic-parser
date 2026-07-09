@@ -219,7 +219,12 @@ def render_html(nodes: dict, edges: list, output_path: Path, title: str,
         paper_id, pct, n_conf, n_total, ver_html_uri, source_url
     When provided, adds a Papers tab to the header for the unified graph.
     """
-    _vis_inline = '<script src="/static/js/vis-network.min.js"></script>'
+    _vis_inline = (
+        '<script src="/static/js/vis-network.min.js" '
+        'onerror="this.onerror=null;this.src='
+        "'https://unpkg.com/vis-network/standalone/umd/vis-network.min.js'\""
+        '></script>'
+    )
 
     vis_nodes = []
     for nid, n in nodes.items():
