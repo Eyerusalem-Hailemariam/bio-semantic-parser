@@ -598,7 +598,10 @@ if (typeof vis === 'undefined') {{
 const NODES_DATA = {nodes_json};
 const EDGES_DATA = {edges_json};
 
-// Build lookup maps
+function esc(s) {{
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}}
+
 const nodeMap = {{}};
 NODES_DATA.forEach(n => nodeMap[n.id] = n);
 const edgeMap = {{}};
@@ -824,8 +827,8 @@ function showNodePanel(nodeId) {{
       <colgroup><col style="width:36%"><col style="width:64%"></colgroup>`;
 
   keys.forEach(k => {{
-    const raw   = props[k];
-    const label = k.replace(/_/g,' ');
+    const raw   = esc(props[k]);
+    const label = esc(k.replace(/_/g,' '));
     const mono  = ['id','id_source'].includes(k);
     const color = mono ? '#79c0ff' : '#e6edf3';
     const font  = mono ? 'font-family:monospace;font-size:11px' : '';
