@@ -9,7 +9,7 @@ six independent checks to verify the output is correct and complete.
 
 Six checks
 ──────────
-  1. Relation types     — every relation in edge files is in the 57-type taxonomy
+  1. Relation types     — every relation in edge files is in the RelationType taxonomy
   2. Entity ID format   — canonical IDs follow standard patterns (MESH, NCBI, etc.)
   3. Orphan edges       — every node referenced by an edge exists in a node file
   4. MeTTa syntax       — every triple follows the (relation (type ID) (type ID)) format
