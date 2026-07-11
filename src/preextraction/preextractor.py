@@ -1,12 +1,13 @@
 """
 Layer 4 — Pre-Extraction Orchestrator
 
-Runs three scispaCy NER models in ensemble, merges spans, applies PubTator3
-normalization for PubMed articles, then classifies each entity's containing
-clause for negation using an NLI cross-encoder.
+Runs a 4-model hybrid NER ensemble (HunFlair2, scispaCy, GLiNER), 
+applies PubTator3 normalization for PubMed articles, then classifies 
+each entity's containing clause for negation.
 """
 import spacy
-
+from flair.nn import Classifier
+from flair.data import Sentence
 from src.preextraction.ner_tagger import NERTagger
 from src.preextraction.negation_detector import NegationDetector
 from src.preextraction.doi_extractor import DOIExtractor
@@ -16,32 +17,107 @@ from src.preextraction.pubtator_client import fetch_pubtator_entities
 
 class Preextractor:
     def __init__(self):
+        # 1. scispaCy (Anatomy / structural fallback)
         self._nlp_bc5 = spacy.load("en_ner_bc5cdr_md")     # DISEASE, CHEMICAL
         self._nlp_jnl = spacy.load("en_ner_jnlpba_md")     # DNA, RNA, PROTEIN, CELL_TYPE, CELL_LINE
-        self._nlp_bio = spacy.load("en_ner_bionlp13cg_md")  # GENE_OR_GENE_PRODUCT, CANCER, ORGANISM, TISSUE
+        self._nlp_bio = spacy.load("en_ner_bionlp13cg_md") # GENE_OR_GENE_PRODUCT, TISSUE, ORGAN, CANCER, CELLULAR_COMPONENT
+        
+        # 2. HunFlair2 (Core Entities - High precision)
+        self._hunflair = Classifier.load('hunflair2')
+        
+        # 3. GLiNER-BioMed (Gap Filler)
+        self._nlp_gliner = spacy.blank("en")
+        self._nlp_gliner.add_pipe("gliner_spacy", config={
+            "gliner_model": "Ihor/gliner-biomed-large-v1.0",
+            "labels": [
+                "genomic variant", "sequence variant", "structural variant", "SNP", "mutation",
+                "phenotype", "clinical symptom", 
+                "biological pathway", "biochemical reaction", "biological process", "molecular function",
+                "enhancer", "promoter", "binding motif", "epigenomic feature",
+                "macromolecular complex", "experimental factor"
+            ]
+        })
 
         self.negation_detector  = NegationDetector()
         self.doi_extractor      = DOIExtractor()
         self.accession_detector = AccessionDetector()
 
     def _run_ensemble(self, text: str):
-        doc1 = self._nlp_bc5(text)
-        doc2 = self._nlp_jnl(text)
-        doc3 = self._nlp_bio(text)
+        # 1. Run Models
+        sentence = Sentence(text)
+        self._hunflair.predict(sentence)
+        
+        doc_bc5 = self._nlp_bc5(text)
+        doc_jnl = self._nlp_jnl(text)
+        doc_bio = self._nlp_bio(text)
+        doc_gliner = self._nlp_gliner(text)
 
-        span_data = (
-            [(e.start_char, e.end_char, e.label_) for e in doc1.ents]
-            + [(e.start_char, e.end_char, e.label_) for e in doc2.ents]
-            + [(e.start_char, e.end_char, e.label_) for e in doc3.ents]
-        )
-        all_spans = []
-        for start, end, label in span_data:
-            span = doc1.char_span(start, end, label=label, alignment_mode="expand")
+        # 2. Bucket Spans by Tier
+        tier1, tier2, tier3, tier4 = [], [], [], []
+
+        # HunFlair2
+        for span in sentence.get_spans('ner'):
+            s = (span.start_position, span.end_position, span.tag)
+            if span.tag in ["Species", "Chemical", "Gene"]:
+                tier1.append(s)
+            elif span.tag == "Disease":
+                tier2.append(s)
+            # CellLine dropped per low F1
+
+        # bc5cdr
+        for e in doc_bc5.ents:
+            s = (e.start_char, e.end_char, e.label_)
+            if e.label_ == "DISEASE":
+                tier1.append(s)
+            elif e.label_ == "CHEMICAL":
+                tier2.append(s)
+
+        # jnlpba
+        for e in doc_jnl.ents:
+            s = (e.start_char, e.end_char, e.label_)
+            if e.label_ in ["CELL_LINE", "CELL_TYPE"]:
+                tier1.append(s)
+            elif e.label_ in ["DNA", "RNA", "PROTEIN"]:
+                tier2.append(s)
+
+        # bionlp13cg
+        for e in doc_bio.ents:
+            if e.label_ not in ["ORGANISM", "GENE_OR_GENE_PRODUCT"]:
+                tier3.append((e.start_char, e.end_char, e.label_))
+
+        # GLiNER
+        for e in doc_gliner.ents:
+            tier4.append((e.start_char, e.end_char, e.label_))
+
+        # 3. Label-Specific Priority Merge
+        occupied: list[tuple[int, int]] = []
+        merged_spans = []
+
+        def _overlaps(start: int, end: int) -> bool:
+            return any(start < b_end and b_start < end for b_start, b_end in occupied)
+
+        def add_spans(spans):
+            # Sort longest span first within this priority tier
+            for start, end, label in sorted(spans, key=lambda s: s[1] - s[0], reverse=True):
+                if not _overlaps(start, end):
+                    merged_spans.append((start, end, label))
+                    occupied.append((start, end))
+
+        add_spans(tier1)
+        add_spans(tier2)
+        add_spans(tier3)
+        add_spans(tier4)
+
+        # 4. Build final doc for NERTagger
+        final_doc = self._nlp_bio(text)
+        final_ents = []
+        for start, end, label in merged_spans:
+            span = final_doc.char_span(start, end, label=label, alignment_mode="expand")
             if span is not None:
-                all_spans.append(span)
+                final_ents.append(span)
 
-        doc1.ents = spacy.util.filter_spans(all_spans)
-        return doc1
+        final_doc.ents = spacy.util.filter_spans(final_ents)
+        return final_doc
 
     def process(self, chunk: dict) -> dict:
         text     = chunk["text"]
