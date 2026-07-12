@@ -190,7 +190,7 @@ Within each tier, spans are sorted **longest-first** to prevent short high-prior
 
 | Notebook | Purpose |
 |---|---|
-| `ner_benchmark_scispacy_hunflair2.ipynb` | F1 benchmarks: BC5CDR, BioNLP2004/JNLPBA, BioNLP-13-CG, CRAFT |
+| `ner_benchmark_scispacy_hunflair2.ipynb` | F1 benchmarks: BC5CDR, BioNLP2004/JNLPBA, BioNLP-13-CG |
 | `ner_benchmark_gliner_biomed.ipynb` | F1 benchmark: GLiNER-BioMed zero-shot |
 | `ner_qualitative_pmc7390530_sirtuins.ipynb` | Qualitative comparison on PMC7390530 (Sirtuin biology) |
 | `ner_qualitative_pmc11975295_alzheimers.ipynb` | Qualitative comparison on PMC11975295 (Alzheimer's disease) |

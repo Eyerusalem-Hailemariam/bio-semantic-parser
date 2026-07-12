@@ -8,6 +8,7 @@ each entity's containing clause for negation.
 import spacy
 from flair.nn import Classifier
 from flair.data import Sentence
+from gliner import GLiNER
 from src.preextraction.ner_tagger import NERTagger
 from src.preextraction.negation_detector import NegationDetector
 from src.preextraction.doi_extractor import DOIExtractor
@@ -23,17 +24,16 @@ class Preextractor:
         
         self._hunflair = Classifier.load('hunflair2')
         
-        self._nlp_gliner = spacy.blank("en")
-        self._nlp_gliner.add_pipe("gliner_spacy", config={
-            "gliner_model": "Ihor/gliner-biomed-large-v1.0",
-            "labels": [
-                "genomic variant", "sequence variant", "structural variant", "SNP", "mutation",
-                "phenotype", "clinical symptom", 
-                "biological pathway", "biochemical reaction", "biological process", "molecular function",
-                "enhancer", "promoter", "binding motif", "epigenomic feature",
-                "macromolecular complex", "experimental factor"
-            ]
-        })
+       
+        self._gliner_model = GLiNER.from_pretrained("Ihor/gliner-biomed-large-v1.0")
+        self._gliner_labels = [
+            "genomic variant", "sequence variant", "structural variant", "SNP", "mutation",
+            "phenotype", "clinical symptom", 
+            "biological pathway", "biochemical reaction", "biological process", "molecular function",
+            "enhancer", "promoter", "binding motif", "epigenomic feature",
+            "macromolecular complex", "experimental factor"
+        ]
+        self._gliner_threshold = 0.3
 
         self.negation_detector  = NegationDetector()
         self.doi_extractor      = DOIExtractor()
@@ -46,7 +46,12 @@ class Preextractor:
         doc_bc5 = self._nlp_bc5(text)
         doc_jnl = self._nlp_jnl(text)
         doc_bio = self._nlp_bio(text)
-        doc_gliner = self._nlp_gliner(text)
+        
+        gliner_entities = self._gliner_model.predict_entities(
+            text, 
+            self._gliner_labels, 
+            threshold=self._gliner_threshold
+        )
 
         tier1, tier2, tier3, tier4 = [], [], [], []
 
@@ -75,8 +80,8 @@ class Preextractor:
             if e.label_ not in ["ORGANISM", "GENE_OR_GENE_PRODUCT"]:
                 tier3.append((e.start_char, e.end_char, e.label_))
 
-        for e in doc_gliner.ents:
-            tier4.append((e.start_char, e.end_char, e.label_))
+        for e in gliner_entities:
+            tier4.append((e['start'], e['end'], e['label']))
 
         occupied: list[tuple[int, int]] = []
         merged_spans = []
