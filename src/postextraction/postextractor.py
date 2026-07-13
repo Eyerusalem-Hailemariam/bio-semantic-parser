@@ -481,25 +481,23 @@ def process(
     _staging_path = _os_sync.getenv("TRIPLE_STORE_PATH", "")
     if _staging_path:
         try:
-            _sc = _sq_sync.connect(_staging_path)
-            for r in records:
-                tid = r.get("triple_id")
-                if not tid:
-                    continue
-                verdict = r.get("validation_verdict", "")
-                if verdict in ("REJECT", "REVIEW") or r.get("is_contradiction"):
-                    flagged = 1
-                else:
-                    flagged = 1 if r.get("flagged_for_review") else 0
-reason = r.get("review_reason") or (r.get("validation_reasoning") or "")[:500]
-                _sc.execute(
-                    "UPDATE triples SET flagged_for_review=?, review_reason=? WHERE id=?",
-                    (flagged, reason, tid)
-                )
-            _sc.commit()
-            _sc.close()
-        except Exception:
-            pass
+            with _sq_sync.connect(_staging_path) as _sc:
+                for r in records:
+                    tid = r.get("triple_id")
+                    if not tid:
+                        continue
+                    verdict = r.get("validation_verdict", "")
+                    if verdict in ("REJECT", "REVIEW") or r.get("is_contradiction"):
+                        flagged = 1
+                    else:
+                        flagged = 1 if r.get("flagged_for_review") else 0
+                    reason = r.get("review_reason") or (r.get("validation_reasoning") or "")[:500]
+                    _sc.execute(
+                        "UPDATE triples SET flagged_for_review=?, review_reason=? WHERE id=?",
+                        (flagged, reason, tid)
+                    )
+        except Exception as exc:
+            log(f"Failed to sync review flags to staging DB at {_staging_path}: {exc}")
 
     for r in records:
         doc_id = r.get("document_id", "")
