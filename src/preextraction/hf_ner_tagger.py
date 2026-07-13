@@ -58,6 +58,8 @@ HF_LABEL_MAP: dict[str, str] = {
 
 _pipeline: Optional[object] = None
 _pipeline_model: str = ""
+import threading as _threading
+_pipeline_lock = _threading.Lock()
 
 
 def _get_pipeline():
@@ -92,14 +94,16 @@ def _get_pipeline():
         else:
             device = -1   # CPU
 
-        _pipeline = _hf_pipeline(
+        new_pipeline = _hf_pipeline(
             "ner",
             model=model,
             tokenizer=tokenizer,
             aggregation_strategy="simple",
             device=device,
         )
-        _pipeline_model = model_name
+        with _pipeline_lock:
+            _pipeline = new_pipeline
+            _pipeline_model = model_name
     return _pipeline
 
 
@@ -155,15 +159,24 @@ def tag_entities(text: str) -> list[dict]:
                              "low", "high", "new", "old", "non", "pre", "pro", "anti"}:
             continue
 
-        # Verbatim check with hyphen normalization:
-        # BERT tokenises "self-management" as "self - management" (spaces around hyphen).
-        # Normalize both sides before comparing so we don't drop valid hyphenated terms.
-        word_norm = word.replace(" - ", "-").replace("- ", "-").replace(" -", "-")
-        if word_norm.lower() not in text.lower() and word.lower() not in text.lower():
+        # Prefer offsets from HF pipeline — avoids always picking first occurrence.
+        start = int(r.get("start", -1))
+        end   = int(r.get("end", -1))
+        if start >= 0 and end > start:
+            word = text[start:end]  # exact span from original text, correct casing
+        else:
+            # Fallback: BERT hyphen normalization then text search
+            word_norm = word.replace(" - ", "-").replace("- ", "-").replace(" -", "-")
+            if word_norm.lower() not in text.lower() and word.lower() not in text.lower():
+                continue
+            if word_norm.lower() in text.lower():
+                word = word_norm
+            start = text.lower().find(word.lower())
+            end   = start + len(word) if start >= 0 else -1
+
+        # Verbatim check
+        if word.lower() not in text.lower():
             continue
-        # Use the normalized form if it matches
-        if word_norm.lower() in text.lower():
-            word = word_norm
 
         # Dedup
         key = word.lower()
@@ -175,8 +188,8 @@ def tag_entities(text: str) -> list[dict]:
             "text":       word,
             "normalized": key,
             "label":      entity_type,
-            "start":      text.lower().find(key),
-            "end":        text.lower().find(key) + len(word),
+            "start":      start,
+            "end":        end,
             "negated":    False,
             "assertion":  "PRESENT",
             "confidence": round(score, 3),

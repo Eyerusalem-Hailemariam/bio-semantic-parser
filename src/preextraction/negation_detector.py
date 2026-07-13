@@ -46,7 +46,10 @@ _DEFAULT_HYPOTHESIS = (
 
 class NegationDetector:
     _MODEL     = "cross-encoder/nli-MiniLM2-L6-H768"
-    _THRESHOLD = float(os.getenv("NEGATION_THRESHOLD", "0.45"))
+    try:
+        _THRESHOLD = float(os.getenv("NEGATION_THRESHOLD", "0.45"))
+    except ValueError:
+        _THRESHOLD = 0.45
     # Calibrated against biomedical test sentences:
     # 0.45 catches "no improvement" (0.89), "NOT recommended" (0.47),
     # while correctly passing "contributes to" (0.03), "enables" (0.04).
