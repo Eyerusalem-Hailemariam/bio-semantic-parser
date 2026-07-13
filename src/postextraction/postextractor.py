@@ -491,7 +491,7 @@ def process(
                     flagged = 1
                 else:
                     flagged = 1 if r.get("flagged_for_review") else 0
-                reason = r.get("review_reason") or r.get("validation_reasoning", "")[:500]
+reason = r.get("review_reason") or (r.get("validation_reasoning") or "")[:500]
                 _sc.execute(
                     "UPDATE triples SET flagged_for_review=?, review_reason=? WHERE id=?",
                     (flagged, reason, tid)
