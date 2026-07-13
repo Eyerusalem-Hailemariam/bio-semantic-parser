@@ -100,8 +100,8 @@ def _extract_embedded_ids(text: str) -> list:
     # Ensembl stable gene ID (ENSG + 11 digits)
     for m in re.finditer(r"\bENSG\d{11}\b", text):
         found.append((f"ENSEMBL:{m.group()}", "ensembl"))
-    # UniProt accession (letter + digit + 3 alphanumeric + digit, standard format)
-    for m in re.finditer(r"\b[A-NR-Z][0-9][A-Z][A-Z0-9]{2}[0-9]\b", text):
+    # UniProt accession (6 or 10 chars): covers P12345, Q9Y2T1, A0A024RBG1, etc.
+    for m in re.finditer(r"\b(?:[OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9]{5}|[A-NR-Z][0-9][A-Z0-9]{8}[0-9])\b", text):
         found.append((f"UniProtKB:{m.group()}", "uniprot"))
     # OBO-style prefixed ID already embedded: e.g. "gene GO:0006914 expression"
     for m in re.finditer(r"\b([A-Z]{2,10}:[A-Z0-9_]{3,15})\b", text):
